@@ -1,161 +1,190 @@
 #!/usr/bin/env bash
-# Arcane - Setup interactif (bannière + panneau + configuration hostname)
-# - Bannière ASCII
-# - Panneau (Développeur + Version du script depuis version.txt)
-# - Saisie hostname + validation + application
-# - Journalisation
+# Arcane - Setup interactif optimisé
+# Configuration hostname avec validation et journalisation
 
 set -Eeuo pipefail
 
-LOG_FILE="${ARCANE_DIR:-$PWD}/setup.log"
+# ---------- Configuration ----------
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly ROOT_DIR="${SCRIPT_DIR%/*}"
+readonly LOG_FILE="${ARCANE_DIR:-$ROOT_DIR}/setup.log"
+readonly VERSION_FILE="${ROOT_DIR}/version.txt"
+readonly HOSTNAME_MAX_LEN=63
+readonly HOSTNAME_REGEX='^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'
 
-# ---------- Couleurs ----------
-if command -v tput >/dev/null 2>&1; then
-    BOLD="$(tput bold)"
-    DIM="$(tput dim)"
-    RESET="$(tput sgr0)"
-    GREEN="$(tput setaf 2)"
-    RED="$(tput setaf 1)"
-    COLORS="$(tput colors 2>/dev/null || echo 8)"
-    if [ "${COLORS:-8}" -ge 16 ]; then
-        DARKGREEN="$(tput setaf 22)"
-        CYAN="$(tput setaf 6)"
+# ---------- Couleurs (optimisé) ----------
+init_colors() {
+    if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+        readonly BOLD="$(tput bold)"
+        readonly RESET="$(tput sgr0)"
+        readonly GREEN="$(tput setaf 2)"
+        readonly RED="$(tput setaf 1)"
+        
+        local colors="$(tput colors 2>/dev/null || echo 8)"
+        if [[ $colors -ge 16 ]]; then
+            readonly CYAN="$(tput setaf 6)"
+        else
+            readonly CYAN="${GREEN}"
+        fi
     else
-        DARKGREEN="$(tput setaf 2)"
-        CYAN="$(tput setaf 6 2>/dev/null || echo)"
+        readonly BOLD=$'\033[1m' RESET=$'\033[0m'
+        readonly GREEN=$'\033[32m' RED=$'\033[31m' CYAN=$'\033[36m'
     fi
-else
-    BOLD=$'\033[1m'
-    DIM=$'\033[2m'
-    RESET=$'\033[0m'
-    GREEN=$'\033[32m'
-    RED=$'\033[31m'
-    DARKGREEN=$'\033[32m'
-    CYAN=$'\033[36m'
-fi
-
-log()
-{
-    printf '%s [%s] %s\n' "$(date +'%F %T')" "$1" "$2" | tee -a "$LOG_FILE"
 }
 
-clear || printf '\033c'
-echo
-
-# ---------- Lecture version ----------
-# On suppose que setup.sh est dans <repo>/arcane/setup.sh et version.txt à <repo>/version.txt
-ROOT_DIR="$(cd "${ARCANE_DIR:-$PWD}/.." >/dev/null 2>&1 && pwd)"
-VERSION_FILE="${ROOT_DIR}/version.txt"
-
-if [[ -f "$VERSION_FILE" ]]; then
-    ARCANE_VERSION="$(head -n1 "$VERSION_FILE" | tr -d '\r\n')"
-else
-    ARCANE_VERSION="unknown"
-fi
-
-CURRENT_HOST="$(hostnamectl --static 2>/dev/null || hostname)"
-
-# ---------- Fonctions d'affichage ----------
-W=60
-
-repeat()
-{
-    # repeat <char> <count>
-    local char="$1"
-    local count="$2"
-    printf "%0.s${char}" $(seq 1 "$count")
+# ---------- Logging ----------
+log() {
+    printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" | tee -a "$LOG_FILE"
 }
 
-line_left()
-{
-    # line_left <text>
-    local text="$1"
-    local len=${#text}
+error_exit() {
+    echo "${RED}✗ $1${RESET}" >&2
+    log "ERR" "$1"
+    exit "${2:-1}"
+}
 
-    if (( len > W - 2 )); then
-        text="${text:0:$((W-5))}..."
-        len=${#text}
+# ---------- Affichage de la bannière ----------
+show_banner() {
+    local version="${1:-unknown}"
+    
+    cat << 'EOF'
+╔═════════════════════════════════════════════════════════════════════════════════════╗
+║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓     A R C A N E . S H     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ║
+╠═════════════════════════════════════════════════════════════════════════════════════╣
+║ ┌─────────────────────────────────────────────────────────────────────────────────┐ ║
+║ │                                                                                 │ ║
+║ │      █████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗     ███████╗██╗  ██╗     │ ║
+║ │     ██╔══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝     ██╔════╝██║  ██║     │ ║
+║ │     ███████║██████╔╝██║     ███████║██╔██╗ ██║█████╗       ███████╗███████║     │ ║
+║ │     ██╔══██║██╔══██╗██║     ██╔══██║██║╚██╗██║██╔══╝       ╚════██║██╔══██║     │ ║
+║ │     ██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████║███████╗ ██╗ ███████║██║  ██║     │ ║
+║ │     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝ ╚═╝ ╚══════╝╚═╝  ╚═╝     │ ║
+║ │                                                                                 │ ║
+║ └─────────────────────────────────────────────────────────────────────────────────┘ ║
+╠═════════════════════════════════════════════════════════════════════════════════════╣
+║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓     I N F O R M A T I O N S     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ║
+╠═════════════════════════════════════════════════════════════════════════════════════╣
+║ ┌─────────────────────────────────────────────────────────────────────────────────┐ ║
+║ │                                                                                 │ ║
+║ │                         • Developer : Lucas Developer •                         │ ║
+EOF
+    printf "║ │%*s• Version : %-7s •%*s│ ║\n" 31 "" "$version" 31 ""
+    cat << 'EOF'
+║ │                                                                                 │ ║
+║ └─────────────────────────────────────────────────────────────────────────────────┘ ║
+╚═════════════════════════════════════════════════════════════════════════════════════╝
+
+EOF
+}
+
+# ---------- Validation hostname ----------
+validate_hostname() {
+    local hostname="$1"
+    
+    # Vérification longueur
+    if [[ ${#hostname} -gt $HOSTNAME_MAX_LEN ]]; then
+        return 1
     fi
-
-    local pad=$(( W - len - 1 ))
-    (( pad < 0 )) && pad=0
-    printf "║ %s%*s║\n" "$text" "$pad" ""
+    
+    # Vérification format
+    if [[ ! $hostname =~ $HOSTNAME_REGEX ]]; then
+        return 1
+    fi
+    
+    # Ne doit pas finir par un tiret
+    if [[ $hostname =~ -$ ]]; then
+        return 1
+    fi
+    
+    return 0
 }
 
-# ---------- Panneau stylisé ----------
-printf "╔═════════════════════════════════════════════════════════════════════════════════════╗\n"
-printf "║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓     A R C A N E . S H     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ║\n"
-printf "╠═════════════════════════════════════════════════════════════════════════════════════╣\n"
-printf "║ ┌─────────────────────────────────────────────────────────────────────────────────┐ ║\n"
-printf "║ │                                                                                 │ ║\n"
-printf "║ │      █████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗     ███████╗██╗  ██╗     │ ║\n"
-printf "║ │     ██╔══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝     ██╔════╝██║  ██║     │ ║\n"
-printf "║ │     ███████║██████╔╝██║     ███████║██╔██╗ ██║█████╗       ███████╗███████║     │ ║\n"
-printf "║ │     ██╔══██║██╔══██╗██║     ██╔══██║██║╚██╗██║██╔══╝       ╚════██║██╔══██║     │ ║\n"
-printf "║ │     ██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████║███████╗ ██╗ ███████║██║  ██║     │ ║\n" 
-printf "║ │     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝ ╚═╝ ╚══════╝╚═╝  ╚═╝     │ ║\n"
-printf "║ │                                                                                 │ ║\n"
-printf "║ └─────────────────────────────────────────────────────────────────────────────────┘ ║\n"
-printf "╠═════════════════════════════════════════════════════════════════════════════════════╣\n"
-printf "║ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓     I N F O R M A T I O N S     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ ║\n"
-printf "╠═════════════════════════════════════════════════════════════════════════════════════╣\n"
-printf "║ ┌─────────────────────────────────────────────────────────────────────────────────┐ ║\n"
-printf "║ │                                                                                 │ ║\n"
-printf "║ │                         • Developer : Lucas Developer •                         │ ║\n"
-printf "║ │                               • Version : 1.0.0 •                               │ ║\n"
-printf "║ │                                                                                 │ ║\n"
-printf "║ └─────────────────────────────────────────────────────────────────────────────────┘ ║\n"
-printf "╚═════════════════════════════════════════════════════════════════════════════════════╝\n"
+# ---------- Affichage des règles ----------
+show_hostname_rules() {
+    cat << EOF
+┌────────────────────────────────────────────────────────┐
+│  ${BOLD}Configuration: Hostname${RESET}                           │
+├────────────────────────────────────────────────────────┤
+│  Caractères autorisés : a-z, A-Z, 0-9, '-'             │
+│  Doit commencer par une lettre ou un chiffre           │
+│  Longueur max : ${HOSTNAME_MAX_LEN} caractères                          │
+└────────────────────────────────────────────────────────┘
 
-echo
+EOF
+}
 
-# ---------- Cadre de configuration Hostname ----------
-echo "┌────────────────────────────────────────────────────────┐"
-echo "│  ${BOLD}Configuration: Hostname${RESET}                           │"
-echo "├────────────────────────────────────────────────────────┤"
-echo "│  Caractères autorisés : a-z, A-Z, 0-9, '-'             │"
-echo "│  Doit commencer par une lettre ou un chiffre           │"
-echo "│  Longueur max : 63 caractères                          │"
-echo "└────────────────────────────────────────────────────────┘"
-echo
+# ---------- Application du hostname ----------
+apply_hostname() {
+    local new_hostname="$1"
+    
+    echo "Application du nouveau hostname…"
+    
+    # Changement via hostnamectl
+    if ! hostnamectl set-hostname "$new_hostname" 2>>"$LOG_FILE"; then
+        error_exit "Échec du changement de hostname. Voir: $LOG_FILE" 3
+    fi
+    
+    # Mise à jour de /etc/hosts si nécessaire
+    if [[ -f /etc/hosts ]] && grep -q "^127.0.1.1" /etc/hosts 2>/dev/null; then
+        sed -i.bak "s/^127\.0\.1\.1.*/127.0.1.1\t${new_hostname}/" /etc/hosts 2>>"$LOG_FILE" || true
+    fi
+}
 
-# ---------- Saisie ----------
-printf "Hostname [%s]: " "${CURRENT_HOST}"
-IFS= read -r HOSTNAME_TARGET
-HOSTNAME_TARGET="${HOSTNAME_TARGET:-$CURRENT_HOST}"
-
-# ---------- Validation ----------
-if [[ ! "$HOSTNAME_TARGET" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,62}$ ]] || [[ "$HOSTNAME_TARGET" =~ -$ ]]; then
+# ---------- Programme principal ----------
+main() {
+    # Initialisation
+    init_colors
+    clear 2>/dev/null || printf '\033c'
+    
+    # Lecture de la version
+    local version="unknown"
+    if [[ -f $VERSION_FILE ]]; then
+        version="$(head -n1 "$VERSION_FILE" | tr -d '\r\n')"
+    fi
+    
+    # Affichage de la bannière
+    show_banner "$version"
+    
+    # Récupération du hostname actuel
+    local current_hostname
+    current_hostname="$(hostnamectl --static 2>/dev/null || hostname)"
+    
+    # Affichage des règles
+    show_hostname_rules
+    
+    # Saisie du nouveau hostname
+    printf "Hostname [%s]: " "$current_hostname"
+    local new_hostname
+    IFS= read -r new_hostname
+    new_hostname="${new_hostname:-$current_hostname}"
+    
+    # Validation
+    if ! validate_hostname "$new_hostname"; then
+        echo
+        echo "${RED}✗ Hostname invalide.${RESET}"
+        echo "  Règles :"
+        echo "  - Commencer par lettre ou chiffre"
+        echo "  - Uniquement lettres, chiffres et tirets"
+        echo "  - Ne pas finir par un tiret"
+        echo "  - ${HOSTNAME_MAX_LEN} caractères maximum"
+        exit 2
+    fi
+    
+    # Application
     echo
-    echo "${RED}✗ Hostname invalide.${RESET}"
-    echo "  Règles :"
-    echo "  - Commencer par lettre ou chiffre"
-    echo "  - Uniquement lettres, chiffres et tirets"
-    echo "  - Ne pas finir par un tiret"
-    echo "  - 63 caractères maximum"
-    exit 2
-fi
+    apply_hostname "$new_hostname"
+    
+    # Confirmation
+    echo
+    cat << EOF
+╔════════════════════════════════════════════════════════╗
+║  ${GREEN}✓ Hostname défini :${RESET} $(printf '%-36s' "$new_hostname")║
+╚════════════════════════════════════════════════════════╝
 
-# ---------- Application ----------
-echo
-echo "Application du nouveau hostname…"
-if ! hostnamectl set-hostname "$HOSTNAME_TARGET" 2>>"$LOG_FILE"; then
-    echo "${RED}✗ Échec du changement de hostname.${RESET}"
-    echo "  Voir le log : $LOG_FILE"
-    exit 3
-fi
+EOF
+    
+    log "INF" "Hostname changed from '${current_hostname}' to '${new_hostname}'"
+}
 
-# /etc/hosts (si présent)
-if grep -q "127.0.1.1" /etc/hosts 2>/dev/null; then
-    sed -i.bak "s/127.0.1.1.*/127.0.1.1\t${HOSTNAME_TARGET}/" /etc/hosts 2>>"$LOG_FILE" || true
-fi
-
-# ---------- Confirmation ----------
-echo
-echo "╔════════════════════════════════════════════════════════╗"
-printf "║  %s✓ Hostname défini :%s %-36s║\n" "$GREEN" "$RESET" "$HOSTNAME_TARGET"
-echo "╚════════════════════════════════════════════════════════╝"
-echo
-
-log "INF" "Hostname changed from '${CURRENT_HOST}' to '${HOSTNAME_TARGET}'"
-exit 0
+# ---------- Exécution ----------
+main "$@"
