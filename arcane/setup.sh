@@ -70,7 +70,7 @@ show_banner() {
 ║ │                                                                                 │ ║
 ║ │                         • Developer : Lucas Developer •                         │ ║
 "
-    printf "║ │%*s• Version : %s •%*s│ ║\n" 31 "" "$v" "$pad" ""
+    printf "║ │%*s• Version : %s •%*s│ ║\n" 30 "" "$v" "$((pad + 1))" ""
     printf '%s' "\
 ║ │                                                                                 │ ║
 ║ └─────────────────────────────────────────────────────────────────────────────────┘ ║
