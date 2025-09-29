@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Arcane - Setup interactif (bannière + panneau + configuration hostname)
-# - Bannière ASCII
+# Arcane - Setup interactif (bannière double cadre + panneau + configuration hostname)
+# - Bannière ASCII (double cadre + bandeau titre)
 # - Panneau (Développeur + Version du script depuis version.txt)
 # - Saisie hostname + validation + application
 # - Journalisation
@@ -55,67 +55,89 @@ fi
 
 CURRENT_HOST="$(hostnamectl --static 2>/dev/null || hostname)"
 
-# ---------- Fonctions d'affichage ----------
-W=60
+# ---------- Helpers d'affichage ----------
+W=78             # largeur intérieure du cadre extérieur
+IW=$(( W - 6 ))  # largeur intérieure du sous-cadre (entre │ │), avec marges
 
-repeat()
-{
-    # repeat <char> <count>
-    local char="$1"
-    local count="$2"
-    printf "%0.s${char}" $(seq 1 "$count")
+repeat() { # repeat <char> <count>
+    local char="$1" count="$2"
+    printf "%0.s%s" $(seq 1 "$count") "$char"
 }
 
-line_left()
-{
-    # line_left <text>
+center() { # center <text> <width>
+    local text="$1" width="$2"
+    # strip séquences ANSI pour un centrage visuel (approx simple)
+    local plain="${text//\033\[[0-9;]*m/}"
+    local len=${#plain}
+    (( len > width )) && { printf "%s" "${text:0:width}"; return; }
+    local pad_left=$(( (width - len) / 2 ))
+    local pad_right=$(( width - len - pad_left ))
+    repeat " " "$pad_left"; printf "%s" "$text"; repeat " " "$pad_right"
+}
+
+line_outer_blank() {
+    printf "║"; repeat " " "$W"; printf "║\n"
+}
+
+line_outer_text_left() { # line_outer_text_left <text>
     local text="$1"
-    local len=${#text}
-
-    if (( len > W - 2 )); then
-        text="${text:0:$((W-5))}..."
-        len=${#text}
-    fi
-
-    local pad=$(( W - len - 1 ))
-    (( pad < 0 )) && pad=0
-    printf "║ %s%*s║\n" "$text" "$pad" ""
+    # tronque si nécessaire
+    local plain="${text//\033\[[0-9;]*m/}"
+    local len=${#plain}
+    (( len > W )) && text="${text:0:$W}"
+    printf "║"; printf "%s" "$text"; repeat " " $(( W - ${#plain} )); printf "║\n"
 }
 
-# ---------- Panneau stylisé ----------
+line_inner_blank() {
+    printf "║  │"; center "" "$IW"; printf "│  ║\n"
+}
+
+line_inner_center() { # line_inner_center <text>
+    local text="$1"
+    printf "║  │"; center "$text" "$IW"; printf "│  ║\n"
+}
+
+section_header() { # section_header <LABEL>
+    local label=" $1 "
+    local left_len=$(( (W - ${#label}) / 2 ))
+    local right_len=$(( W - ${#label} - left_len ))
+    printf "╠"; repeat "═" "$left_len"; printf "%s" "$label"; repeat "═" "$right_len"; printf "╣\n"
+}
+
+# ---------- Bannière double cadre ----------
 printf "╔"; repeat "═" "$W"; printf "╗\n"
+line_outer_text_left " ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  ${BOLD}${CYAN}A R C A N E${RESET}   ${DIM}P R O J E C T${RESET}  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ "
+printf "╠"; repeat "═" "$W"; printf "╣\n"
 
-printf "║"; repeat " " "$W"; printf "║\n"
+# Sous-cadre
+printf "║  ┌"; repeat "─" "$IW"; printf "┐  ║\n"
+line_inner_blank
+line_inner_center "${BOLD}${DARKGREEN} █████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗  ██████╗ ${RESET}"
+line_inner_center "${BOLD}${DARKGREEN}██╔══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝ ██╔═══██╗${RESET}"
+line_inner_center "${BOLD}${DARKGREEN}███████║██████╔╝██║     ███████║██╔██╗ ██║█████╗   ██║   ██║${RESET}"
+line_inner_center "${BOLD}${DARKGREEN}██╔══██║██╔══██╗██║     ██╔══██║██║╚██╗██║██╔══╝   ██║   ██║${RESET}"
+line_inner_center "${BOLD}${DARKGREEN}██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████║███████╗ ╚██████╔╝${RESET}"
+line_inner_center "${BOLD}${DARKGREEN}╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝  ╚═════╝ ${RESET}"
+line_inner_blank
+printf "║  └"; repeat "─" "$IW"; printf "┘  ║\n"
 
-printf "║      █████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗     ║\n"
-printf "║     ██╔══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝     ║\n"
-printf "║     ███████║██████╔╝██║     ███████║██╔██╗ ██║█████╗       ║\n"
-printf "║     ██╔══██║██╔══██╗██║     ██╔══██║██║╚██╗██║██╔══╝       ║\n"
-printf "║     ██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████║███████╗     ║\n"
-printf "║     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝     ║\n"
-
-printf "║"; repeat " " "$W"; printf "║\n"
-
-printf "╟"; repeat "─" "$W"; printf "╢\n"
-
-printf "║"; repeat " " "$W"; printf "║\n"
-
-line_left "${DIM}Développeur:${RESET} Lucas Developer"
-line_left "${DIM}Version du script:${RESET} ${ARCANE_VERSION}"
-
-printf "║"; repeat " " "$W"; printf "║\n"
-
+section_header "INFO"
+line_outer_blank
+line_outer_text_left " • ${DIM}Developer${RESET}   : Lucas Developer"
+line_outer_text_left " • ${DIM}Version${RESET}     : ${ARCANE_VERSION}"
+# Pour ajouter un dépôt plus tard : line_outer_text_left " • ${DIM}Repository${RESET}  : github.com/tonrepo"
+line_outer_blank
 printf "╚"; repeat "═" "$W"; printf "╝\n"
 echo
 
 # ---------- Cadre de configuration Hostname ----------
-echo "┌────────────────────────────────────────────────────────┐"
-echo "│  ${BOLD}Configuration: Hostname${RESET}                           │"
-echo "├────────────────────────────────────────────────────────┤"
-echo "│  Caractères autorisés : a-z, A-Z, 0-9, '-'             │"
-echo "│  Doit commencer par une lettre ou un chiffre           │"
-echo "│  Longueur max : 63 caractères                          │"
-echo "└────────────────────────────────────────────────────────┘"
+echo "┌────────────────────────────────────────────────────────────────────────────┐"
+echo "│  ${BOLD}Configuration: Hostname${RESET}                                                     │"
+echo "├────────────────────────────────────────────────────────────────────────────┤"
+echo "│  Caractères autorisés : a-z, A-Z, 0-9, '-'                                 │"
+echo "│  Doit commencer par une lettre ou un chiffre                               │"
+echo "│  Longueur max : 63 caractères                                              │"
+echo "└────────────────────────────────────────────────────────────────────────────┘"
 echo
 
 # ---------- Saisie ----------
@@ -151,9 +173,9 @@ fi
 
 # ---------- Confirmation ----------
 echo
-echo "╔════════════════════════════════════════════════════════╗"
-printf "║  %s✓ Hostname défini :%s %-36s║\n" "$GREEN" "$RESET" "$HOSTNAME_TARGET"
-echo "╚════════════════════════════════════════════════════════╝"
+echo "╔════════════════════════════════════════════════════════════════════════════╗"
+printf "║  %s✓ Hostname défini :%s %-54s║\n" "$GREEN" "$RESET" "$HOSTNAME_TARGET"
+echo "╚════════════════════════════════════════════════════════════════════════════╝"
 echo
 
 log "INF" "Hostname changed from '${CURRENT_HOST}' to '${HOSTNAME_TARGET}'"
