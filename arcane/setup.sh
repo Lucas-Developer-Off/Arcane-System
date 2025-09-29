@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Arcane - Interactive step (ASCII title + styled ARCANE panel + hostname prompt)
-# - Clear screen
-# - Top ASCII banner
-# - Styled panel with "ARCANE" + subtitle (creator/repo/ref/installed/host)
-# - Config frame (Hostname) + validation + apply
-# - Final confirmation
+# Arcane - Setup interactif (bannière + panneau + configuration hostname)
+# - Bannière ASCII
+# - Panneau (Développeur + Version du script depuis version.txt)
+# - Saisie hostname + validation + application
+# - Journalisation
 
 set -Eeuo pipefail
 
 LOG_FILE="${ARCANE_DIR:-$PWD}/setup.log"
 
-# ---------- Colors ----------
+# ---------- Couleurs ----------
 if command -v tput >/dev/null 2>&1; then
     BOLD="$(tput bold)"
     DIM="$(tput dim)"
@@ -35,79 +34,57 @@ else
     CYAN=$'\033[36m'
 fi
 
-log() {
+log()
+{
     printf '%s [%s] %s\n' "$(date +'%F %T')" "$1" "$2" | tee -a "$LOG_FILE"
 }
 
 clear || printf '\033c'
-
 echo
 
-# ---------- Read metadata ----------
+# ---------- Lecture version ----------
+# On suppose que setup.sh est dans <repo>/arcane/setup.sh et version.txt à <repo>/version.txt
 ROOT_DIR="$(cd "${ARCANE_DIR:-$PWD}/.." >/dev/null 2>&1 && pwd)"
-META_FILE="${ROOT_DIR}/.arcane-meta"
+VERSION_FILE="${ROOT_DIR}/version.txt"
 
-if [[ -f "$META_FILE" ]]; then
-    META_REPO="$(grep -E '^source_repo=' "$META_FILE" 2>/dev/null | cut -d= -f2- || echo "unknown")"
-    META_REF="$(grep -E '^source_ref=' "$META_FILE" 2>/dev/null | cut -d= -f2- || echo "unknown")"
-    META_INSTALLED="$(grep -E '^installed_at=' "$META_FILE" 2>/dev/null | cut -d= -f2- || echo "$(date +'%F %T')")"
+if [[ -f "$VERSION_FILE" ]]; then
+    ARCANE_VERSION="$(head -n1 "$VERSION_FILE" | tr -d '\r\n')"
 else
-    META_REPO="unknown"
-    META_REF="unknown"
-    META_INSTALLED="$(date +'%F %T')"
+    ARCANE_VERSION="unknown"
 fi
 
 CURRENT_HOST="$(hostnamectl --static 2>/dev/null || hostname)"
 
-# ---------- Panel rendering functions ----------
-# Fixed inner width for clean rendering
+# ---------- Fonctions d'affichage ----------
 W=60
 
-repeat() {
+repeat()
+{
     # repeat <char> <count>
     local char="$1"
     local count="$2"
     printf "%0.s${char}" $(seq 1 "$count")
 }
 
-line_center_raw() {
-    # line_center_raw <raw_text> [color_prefix]
-    local raw="$1"
-    local color="${2:-}"
-    local len=${#raw}
-    local pad_left=$(( (W - len) / 2 ))
-    (( pad_left < 0 )) && pad_left=0
-    local pad_right=$(( W - len - pad_left ))
-    (( pad_right < 0 )) && pad_right=0
-    
-    printf "║%*s" "$pad_left" ""
-    printf "%s%s%s" "$color" "$raw" "$RESET"
-    printf "%*s║\n" "$pad_right" ""
-}
-
-line_left() {
+line_left()
+{
     # line_left <text>
     local text="$1"
     local len=${#text}
-    
-    # Truncate if too long
+
     if (( len > W - 2 )); then
         text="${text:0:$((W-5))}..."
         len=${#text}
     fi
-    
+
     local pad=$(( W - len - 1 ))
     (( pad < 0 )) && pad=0
     printf "║ %s%*s║\n" "$text" "$pad" ""
 }
 
-# ---------- Styled ARCANE panel ----------
-# Top border
-printf "╔"
-repeat "═" "$W"
-printf "╗\n"
+# ---------- Panneau stylisé ----------
+printf "╔"; repeat "═" "$W"; printf "╗\n"
 
-# ASCII Title ARCANE (centered, width 52 chars)
 printf "║      █████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗     ║\n"
 printf "║     ██╔══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝     ║\n"
 printf "║     ███████║██████╔╝██║     ███████║██╔██╗ ██║█████╗       ║\n"
@@ -115,69 +92,59 @@ printf "║     ██╔══██║██╔══██╗██║     �
 printf "║     ██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████║███████╗     ║\n"
 printf "║     ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝     ║\n"
 
-# Separator
-printf "╟"
-repeat "─" "$W"
-printf "╢\n"
+printf "╟"; repeat "─" "$W"; printf "╢\n"
 
-# Subtitle information
-line_left "${DIM}Creator:${RESET} Lucas Developer"
-line_left "${DIM}Repository:${RESET} ${META_REPO}"
-line_left "${DIM}Ref:${RESET} ${META_REF}"
-line_left "${DIM}Installed:${RESET} ${META_INSTALLED}"
-line_left "${DIM}Host:${RESET} ${CURRENT_HOST}"
+line_left "${DIM}Développeur:${RESET} Lucas Developer"
+line_left "${DIM}Version du script:${RESET} ${ARCANE_VERSION}"
 
-# Bottom border
-printf "╚"
-repeat "═" "$W"
-printf "╝\n"
+printf "╚"; repeat "═" "$W"; printf "╝\n"
 echo
 
-# ---------- Hostname configuration frame ----------
+# ---------- Cadre de configuration Hostname ----------
 echo "┌────────────────────────────────────────────────────────┐"
 echo "│  ${BOLD}Configuration: Hostname${RESET}                           │"
 echo "├────────────────────────────────────────────────────────┤"
-echo "│  Allowed characters: a-z, A-Z, 0-9, '-'                │"
-echo "│  Must start with letter or digit                       │"
-echo "│  Max length: 63 characters                             │"
+echo "│  Caractères autorisés : a-z, A-Z, 0-9, '-'             │"
+echo "│  Doit commencer par une lettre ou un chiffre           │"
+echo "│  Longueur max : 63 caractères                          │"
 echo "└────────────────────────────────────────────────────────┘"
 echo
 
-# ---------- Prompt for hostname ----------
+# ---------- Saisie ----------
 printf "Hostname [%s]: " "${CURRENT_HOST}"
 IFS= read -r HOSTNAME_TARGET
 HOSTNAME_TARGET="${HOSTNAME_TARGET:-$CURRENT_HOST}"
 
-# Validation
+# ---------- Validation ----------
 if [[ ! "$HOSTNAME_TARGET" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,62}$ ]] || [[ "$HOSTNAME_TARGET" =~ -$ ]]; then
     echo
-    echo "${RED}✗ Invalid hostname.${RESET}"
-    echo "  Requirements:"
-    echo "  - Start with letter or digit"
-    echo "  - Only letters, digits, and hyphens"
-    echo "  - Cannot end with hyphen"
-    echo "  - Maximum 63 characters"
+    echo "${RED}✗ Hostname invalide.${RESET}"
+    echo "  Règles :"
+    echo "  - Commencer par lettre ou chiffre"
+    echo "  - Uniquement lettres, chiffres et tirets"
+    echo "  - Ne pas finir par un tiret"
+    echo "  - 63 caractères maximum"
     exit 2
 fi
 
-# Apply hostname change (requires root privileges)
+# ---------- Application ----------
 echo
-echo "Applying hostname change..."
+echo "Application du nouveau hostname…"
 if ! hostnamectl set-hostname "$HOSTNAME_TARGET" 2>>"$LOG_FILE"; then
-    echo "${RED}✗ Failed to set hostname.${RESET}"
-    echo "  Check log file: $LOG_FILE"
+    echo "${RED}✗ Échec du changement de hostname.${RESET}"
+    echo "  Voir le log : $LOG_FILE"
     exit 3
 fi
 
-# Update /etc/hosts if needed
+# /etc/hosts (si présent)
 if grep -q "127.0.1.1" /etc/hosts 2>/dev/null; then
     sed -i.bak "s/127.0.1.1.*/127.0.1.1\t${HOSTNAME_TARGET}/" /etc/hosts 2>>"$LOG_FILE" || true
 fi
 
-# Final confirmation message
+# ---------- Confirmation ----------
 echo
 echo "╔════════════════════════════════════════════════════════╗"
-printf "║  %s✓ Hostname set:%s %-37s║\n" "$GREEN" "$RESET" "$HOSTNAME_TARGET"
+printf "║  %s✓ Hostname défini :%s %-36s║\n" "$GREEN" "$RESET" "$HOSTNAME_TARGET"
 echo "╚════════════════════════════════════════════════════════╝"
 echo
 
