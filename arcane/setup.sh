@@ -41,6 +41,8 @@ log() {
 
 clear || printf '\033c'
 
+echo
+
 # ---------- Read metadata ----------
 ROOT_DIR="$(cd "${ARCANE_DIR:-$PWD}/.." >/dev/null 2>&1 && pwd)"
 META_FILE="${ROOT_DIR}/.arcane-meta"
