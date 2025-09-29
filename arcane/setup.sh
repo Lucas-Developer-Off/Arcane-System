@@ -39,6 +39,72 @@ log()
     printf '%s [%s] %s\n' "$(date +'%F %T')" "$1" "$2" | tee -a "$LOG_FILE"
 }
 
+# ---------- Terminal / mise en page ----------
+# Largeur interne du cadre extérieur (W) : fixe pour un rendu stable.
+W=78
+IW=$(( W - 6 ))  # largeur utile du sous-cadre (entre │ │), avec marges
+
+repeat() { # repeat <char> <count>
+    # Utilise printf + seq (portable sur Linux). Si seq absent, fallback simple.
+    local char="$1" count="$2"
+    if command -v seq >/dev/null 2>&1; then
+        printf "%0.s%s" $(seq 1 "$count") "$char"
+    else
+        local i
+        for (( i=0; i<count; i++ )); do printf "%s" "$char"; done
+    fi
+}
+
+center() { # center <text> <width>
+    local text="$1" width="$2"
+    # Retire approximativement les séquences ANSI pour un centrage visuel correct.
+    local plain="${text//\033\[[0-9;]*m/}"
+    local len=${#plain}
+    if (( len > width )); then
+        printf "%s" "$text" | cut -c1-"$width"
+        return
+    fi
+    local pad_left=$(( (width - len) / 2 ))
+    local pad_right=$(( width - len - pad_left ))
+    repeat " " "$pad_left"; printf "%s" "$text"; repeat " " "$pad_right"
+}
+
+line_outer_blank() {
+    printf "║"; repeat " " "$W"; printf "║\n"
+}
+
+line_outer_text_left() { # line_outer_text_left <text>
+    local text="$1"
+    # Tronque si nécessaire en se basant sur longueur "visible".
+    local plain="${text//\033\[[0-9;]*m/}"
+    local len=${#plain}
+    if (( len > W )); then
+        # On coupe en conservant les séquences ANSI (approximation acceptable)
+        text="$(printf "%s" "$text" | cut -c1-$W)"
+        plain="${text//\033\[[0-9;]*m/}"
+        len=${#plain}
+    fi
+    printf "║%s" "$text"
+    repeat " " $(( W - len ))
+    printf "║\n"
+}
+
+line_inner_blank() {
+    printf "║  │"; repeat " " "$IW"; printf "│  ║\n"
+}
+
+line_inner_center() { # line_inner_center <text>
+    local text="$1"
+    printf "║  │"; center "$text" "$IW"; printf "│  ║\n"
+}
+
+section_header() { # section_header <LABEL>
+    local label=" $1 "
+    local left_len=$(( (W - ${#label}) / 2 ))
+    local right_len=$(( W - ${#label} - left_len ))
+    printf "╠"; repeat "═" "$left_len"; printf "%s" "$label"; repeat "═" "$right_len"; printf "╣\n"
+}
+
 clear || printf '\033c'
 echo
 
@@ -54,55 +120,6 @@ else
 fi
 
 CURRENT_HOST="$(hostnamectl --static 2>/dev/null || hostname)"
-
-# ---------- Helpers d'affichage ----------
-W=78             # largeur intérieure du cadre extérieur
-IW=$(( W - 6 ))  # largeur intérieure du sous-cadre (entre │ │), avec marges
-
-repeat() { # repeat <char> <count>
-    local char="$1" count="$2"
-    printf "%0.s%s" $(seq 1 "$count") "$char"
-}
-
-center() { # center <text> <width>
-    local text="$1" width="$2"
-    # strip séquences ANSI pour un centrage visuel (approx simple)
-    local plain="${text//\033\[[0-9;]*m/}"
-    local len=${#plain}
-    (( len > width )) && { printf "%s" "${text:0:width}"; return; }
-    local pad_left=$(( (width - len) / 2 ))
-    local pad_right=$(( width - len - pad_left ))
-    repeat " " "$pad_left"; printf "%s" "$text"; repeat " " "$pad_right"
-}
-
-line_outer_blank() {
-    printf "║"; repeat " " "$W"; printf "║\n"
-}
-
-line_outer_text_left() { # line_outer_text_left <text>
-    local text="$1"
-    # tronque si nécessaire
-    local plain="${text//\033\[[0-9;]*m/}"
-    local len=${#plain}
-    (( len > W )) && text="${text:0:$W}"
-    printf "║"; printf "%s" "$text"; repeat " " $(( W - ${#plain} )); printf "║\n"
-}
-
-line_inner_blank() {
-    printf "║  │"; center "" "$IW"; printf "│  ║\n"
-}
-
-line_inner_center() { # line_inner_center <text>
-    local text="$1"
-    printf "║  │"; center "$text" "$IW"; printf "│  ║\n"
-}
-
-section_header() { # section_header <LABEL>
-    local label=" $1 "
-    local left_len=$(( (W - ${#label}) / 2 ))
-    local right_len=$(( W - ${#label} - left_len ))
-    printf "╠"; repeat "═" "$left_len"; printf "%s" "$label"; repeat "═" "$right_len"; printf "╣\n"
-}
 
 # ---------- Bannière double cadre ----------
 printf "╔"; repeat "═" "$W"; printf "╗\n"
@@ -125,7 +142,6 @@ section_header "INFO"
 line_outer_blank
 line_outer_text_left " • ${DIM}Developer${RESET}   : Lucas Developer"
 line_outer_text_left " • ${DIM}Version${RESET}     : ${ARCANE_VERSION}"
-# Pour ajouter un dépôt plus tard : line_outer_text_left " • ${DIM}Repository${RESET}  : github.com/tonrepo"
 line_outer_blank
 printf "╚"; repeat "═" "$W"; printf "╝\n"
 echo
