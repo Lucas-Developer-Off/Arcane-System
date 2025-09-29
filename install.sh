@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =====================================================
-# Arcane-System : Script d'installation auto
-# - Télécharge un repo GitHub
-# - Installe dans ~/Arcane-System
-# - Lance setup.sh si présent
+# Arcane-System : installateur non interactif
+# - Télécharge le repo GitHub
+# - Installe dans ~/Arcane-System (ou --dir)
+# - Lance arcane/setup.sh si présent
 # - Affiche un message final
 # =====================================================
 
@@ -13,6 +13,7 @@ set -Eeuo pipefail
 REPO_DEFAULT="Lucas-Developer-Off/Arcane-System"
 BRANCH_DEFAULT="main"
 TARGET_DIR_DEFAULT="${HOME}/Arcane-System"
+ARCANE_SUBDIR_DEFAULT="arcane"   # tout le reste vit ici
 
 # ====== Parsing arguments ======
 REPO="$REPO_DEFAULT"
@@ -20,16 +21,18 @@ BRANCH="$BRANCH_DEFAULT"
 TAG=""
 TARGET_DIR="$TARGET_DIR_DEFAULT"
 FORCE="no"
+ARCANE_SUBDIR="$ARCANE_SUBDIR_DEFAULT"
 
 usage() {
     cat <<EOF
 Installateur Arcane-System
 
 Options:
-  --repo <user/repo>     Repo GitHub (ex: user/Arcane-System)
-  --branch <branche>     Branche (defaut: ${BRANCH_DEFAULT})
+  --repo <user/repo>     Repo GitHub (defaut: ${REPO_DEFAULT})
+  --branch <branche>     Branche       (defaut: ${BRANCH_DEFAULT})
   --tag <vX.Y.Z>         Tag (prioritaire sur --branch)
   --dir <chemin>         Dossier cible (defaut: ${TARGET_DIR_DEFAULT})
+  --subdir <nom>         Sous-dossier applicatif (defaut: ${ARCANE_SUBDIR_DEFAULT})
   --force                Écrase l'existant (backup .bak.TIMESTAMP)
   -h, --help             Aide
 EOF
@@ -37,12 +40,13 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --repo)   REPO="$2"; shift 2;;
-        --branch) BRANCH="$2"; shift 2;;
-        --tag)    TAG="$2"; shift 2;;
+        --repo)     REPO="$2"; shift 2;;
+        --branch)   BRANCH="$2"; shift 2;;
+        --tag)      TAG="$2"; shift 2;;
         --dir|--target) TARGET_DIR="$2"; shift 2;;
-        --force)  FORCE="yes"; shift;;
-        -h|--help) usage; exit 0;;
+        --subdir)   ARCANE_SUBDIR="$2"; shift 2;;
+        --force)    FORCE="yes"; shift;;
+        -h|--help)  usage; exit 0;;
         *) echo "Option inconnue: $1"; usage; exit 2;;
     esac
 done
@@ -67,18 +71,6 @@ download() {
     fi
 }
 
-file_put_if_different() {
-    local content="$1" dest="$2"
-    local tmp
-    tmp="$(mktemp)"
-    printf "%s" "$content" > "$tmp"
-    if [[ ! -f "$dest" ]] || ! cmp -s "$tmp" "$dest"; then
-        cp -a "$dest" "${dest}.bak.$(date +'%Y%m%d%H%M%S')" 2>/dev/null || true
-        install -m 0644 "$tmp" "$dest"
-    fi
-    rm -f "$tmp"
-}
-
 # ====== Vérifications ======
 require_cmd tar gzip find
 
@@ -93,6 +85,7 @@ fi
 
 log INF "Repo: ${REPO} (${REF_DESC})"
 log INF "Cible: ${TARGET_DIR}"
+log INF "Sous-dossier applicatif: ${ARCANE_SUBDIR}"
 
 # ====== Téléchargement ======
 TMP_DIR="$(mktemp -d)"
@@ -121,29 +114,37 @@ fi
 mkdir -p "$(dirname "$TARGET_DIR")"
 mv "$SRC_DIR" "$TARGET_DIR"
 
-# Scripts exécutables
-find "$TARGET_DIR" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 chmod +x || true
+# Scripts .sh exécutables (2 niveaux)
+if command -v xargs >/dev/null 2>&1; then
+    find "$TARGET_DIR" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 chmod +x || true
+else
+    find "$TARGET_DIR" -maxdepth 2 -type f -name "*.sh" -exec chmod +x {} \; || true
+fi
 
 # Meta
-echo "installed_at=$(date +'%F %T')" > "${TARGET_DIR}/.arcane-meta"
-echo "source_repo=${REPO}"           >> "${TARGET_DIR}/.arcane-meta"
-echo "source_ref=${TAG:-$BRANCH}"    >> "${TARGET_DIR}/.arcane-meta"
+{
+  echo "installed_at=$(date +'%F %T')"
+  echo "source_repo=${REPO}"
+  echo "source_ref=${TAG:-$BRANCH}"
+  echo "arcane_subdir=${ARCANE_SUBDIR}"
+} > "${TARGET_DIR}/.arcane-meta"
 
 log INF "Installation terminée."
 log INF "Chemin: ${TARGET_DIR}"
 
-# ====== Lancement automatique de setup.sh ======
-SETUP="$TARGET_DIR/setup.sh"
-SETUP_LOG="$TARGET_DIR/setup.log"
+# ====== Lancement auto : arcane/setup.sh ======
+ARCANE_DIR="${TARGET_DIR}/${ARCANE_SUBDIR}"
+SETUP="${ARCANE_DIR}/setup.sh"
+SETUP_LOG="${ARCANE_DIR}/setup.log"
 
 if [[ -f "$SETUP" ]]; then
-    log INF "setup.sh détecté → exécution immédiate."
-
+    log INF "setup.sh détecté → exécution immédiate (dans ${ARCANE_DIR})."
+    export ARCANE_DIR
     if [[ $EUID -ne 0 ]]; then
-        sudo -E -H bash -Eeuo pipefail -c "cd \"$TARGET_DIR\" && ./setup.sh" | tee -a "$SETUP_LOG"
+        sudo -E -H bash -Eeuo pipefail -c "cd \"$ARCANE_DIR\" && ./setup.sh" | tee -a "$SETUP_LOG"
         RC=${PIPESTATUS[0]}
     else
-        ( cd "$TARGET_DIR" && bash -Eeuo pipefail ./setup.sh ) | tee -a "$SETUP_LOG"
+        ( cd "$ARCANE_DIR" && bash -Eeuo pipefail ./setup.sh ) | tee -a "$SETUP_LOG"
         RC=${PIPESTATUS[0]}
     fi
 
@@ -154,21 +155,21 @@ if [[ -f "$SETUP" ]]; then
         exit $RC
     fi
 else
-    log WRN "setup.sh absent → étape post-install ignorée."
+    log WRN "setup.sh absent dans ${ARCANE_DIR} → étape post-install ignorée."
 fi
 
 # ====== Message final ======
 cat <<EOF
 
 ====================================================
- ✅ Arcane-System installé avec succès
+ ✅ Arcane-System installé
 ----------------------------------------------------
- 📂 Dossier : $TARGET_DIR
- 📜 Log setup : $SETUP_LOG
+ 📂 Dossier : ${TARGET_DIR}
+ 📁 App     : ${ARCANE_DIR}
+ 📜 Log     : ${SETUP_LOG}
 
- ℹ️  Pour relancer le setup manuellement :
-     cd $TARGET_DIR && sudo ./setup.sh
-
+ 🔁 Relancer le setup manuellement :
+     cd ${ARCANE_DIR} && sudo ./setup.sh
 ====================================================
 
 EOF
