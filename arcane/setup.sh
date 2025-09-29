@@ -34,16 +34,13 @@ clear || printf '\033c'
 
 # ---- Titre ASCII (non coloré pour garder l'alignement) ----
 cat <<'ASCII'
-█████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗
+ █████╗ ██████╗  ██████╗ █████╗ ███╗   ██╗███████╗
 ██╔══██╗██╔══██╗██╔════╝██╔══██╗████╗  ██║██╔════╝
 ███████║██████╔╝██║     ███████║██╔██╗ ██║█████╗  
 ██╔══██║██╔══██╗██║     ██╔══██║██║╚██╗██║██╔══╝  
 ██║  ██║██║  ██║╚██████╗██║  ██║██║ ╚████║███████╗
 ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝
 ASCII
-
-# Ligne " ARCANE" (avec un espace) en vert foncé
-printf " %sARCANE%s\n\n" "$DARKGREEN" "$RESET"
 
 # ---- Cadre d'information ----
 CURRENT_HOST="$(hostnamectl --static 2>/dev/null || hostname)"
