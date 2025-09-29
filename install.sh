@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # =====================================================
-# Arcane-System : installateur non interactif
+# Arcane-System : installateur non interactif + verrou
 # - Télécharge le repo GitHub
 # - Installe dans ~/Arcane-System (ou --dir)
 # - Lance arcane/setup.sh si présent
-# - Affiche un message final
+# - Crée /var/lib/arcane/installed.lock
+# - Bloque toute réinstallation si lock présent (sauf --reinstall)
 # =====================================================
 
 set -Eeuo pipefail
@@ -15,13 +16,18 @@ BRANCH_DEFAULT="main"
 TARGET_DIR_DEFAULT="${HOME}/Arcane-System"
 ARCANE_SUBDIR_DEFAULT="arcane"   # tout le reste vit ici
 
+LOCK_DIR_DEFAULT="/var/lib/arcane"
+LOCK_FILE_NAME="installed.lock"
+
 # ====== Parsing arguments ======
 REPO="$REPO_DEFAULT"
 BRANCH="$BRANCH_DEFAULT"
 TAG=""
 TARGET_DIR="$TARGET_DIR_DEFAULT"
 FORCE="no"
+REINSTALL="no"
 ARCANE_SUBDIR="$ARCANE_SUBDIR_DEFAULT"
+LOCK_DIR="$LOCK_DIR_DEFAULT"
 
 usage() {
     cat <<EOF
@@ -33,23 +39,29 @@ Options:
   --tag <vX.Y.Z>         Tag (prioritaire sur --branch)
   --dir <chemin>         Dossier cible (defaut: ${TARGET_DIR_DEFAULT})
   --subdir <nom>         Sous-dossier applicatif (defaut: ${ARCANE_SUBDIR_DEFAULT})
-  --force                Écrase l'existant (backup .bak.TIMESTAMP)
+  --lock-dir <chemin>    Dossier du verrou (defaut: ${LOCK_DIR_DEFAULT})
+  --force                Remplace le dossier cible existant (backup)
+  --reinstall            Autorise la réinstallation même si un verrou existe
   -h, --help             Aide
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --repo)     REPO="$2"; shift 2;;
-        --branch)   BRANCH="$2"; shift 2;;
-        --tag)      TAG="$2"; shift 2;;
+        --repo)       REPO="$2"; shift 2;;
+        --branch)     BRANCH="$2"; shift 2;;
+        --tag)        TAG="$2"; shift 2;;
         --dir|--target) TARGET_DIR="$2"; shift 2;;
-        --subdir)   ARCANE_SUBDIR="$2"; shift 2;;
-        --force)    FORCE="yes"; shift;;
-        -h|--help)  usage; exit 0;;
+        --subdir)     ARCANE_SUBDIR="$2"; shift 2;;
+        --lock-dir)   LOCK_DIR="$2"; shift 2;;
+        --force)      FORCE="yes"; shift;;
+        --reinstall)  REINSTALL="yes"; shift;;
+        -h|--help)    usage; exit 0;;
         *) echo "Option inconnue: $1"; usage; exit 2;;
     esac
 done
+
+LOCK_FILE="${LOCK_DIR}/${LOCK_FILE_NAME}"
 
 # ====== Fonctions ======
 log() { printf '%s [%s] %s\n' "$(date +'%F %T')" "$1" "${*:2}"; }
@@ -58,6 +70,13 @@ require_cmd() {
     for c in "$@"; do
         command -v "$c" >/dev/null 2>&1 || { echo "Commande requise manquante: $c"; exit 3; }
     done
+}
+
+require_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo "Ce script doit être exécuté en root (sudo) pour gérer le verrou dans ${LOCK_DIR}."
+        exit 1
+    fi
 }
 
 download() {
@@ -71,8 +90,32 @@ download() {
     fi
 }
 
-# ====== Vérifications ======
+write_lock() {
+    install -d -m 0755 "$LOCK_DIR"
+    local host_now
+    host_now="$(hostnamectl --static 2>/dev/null || hostname)"
+    cat > "$LOCK_FILE" <<EOF
+installed_at=$(date +'%F %T')
+source_repo=${REPO}
+source_ref=${TAG:-$BRANCH}
+target_dir=${TARGET_DIR}
+arcane_subdir=${ARCANE_SUBDIR}
+hostname=${host_now}
+user=${SUDO_USER:-$USER}
+EOF
+    chmod 0644 "$LOCK_FILE"
+}
+
+# ====== Pré-requis ======
+require_root
 require_cmd tar gzip find
+
+# ====== Vérif verrou ======
+if [[ -f "$LOCK_FILE" && "$REINSTALL" != "yes" ]]; then
+    echo "Installation déjà présente (verrou: $LOCK_FILE)."
+    echo "Pour réinstaller : relance avec --reinstall (et --force pour remplacer ${TARGET_DIR})."
+    exit 10
+fi
 
 # ====== URL archive GitHub ======
 if [[ -n "$TAG" ]]; then
@@ -86,6 +129,7 @@ fi
 log INF "Repo: ${REPO} (${REF_DESC})"
 log INF "Cible: ${TARGET_DIR}"
 log INF "Sous-dossier applicatif: ${ARCANE_SUBDIR}"
+log INF "Verrou: ${LOCK_FILE}"
 
 # ====== Téléchargement ======
 TMP_DIR="$(mktemp -d)"
@@ -107,7 +151,8 @@ if [[ -e "$TARGET_DIR" ]]; then
         mv "$TARGET_DIR" "$BKP"
         log INF "Backup de l'ancien dossier: $BKP"
     else
-        echo "Erreur: ${TARGET_DIR} existe déjà. Utilise --force."; exit 7;
+        echo "Erreur: ${TARGET_DIR} existe déjà. Utilise --force pour remplacer."
+        exit 7
     fi
 fi
 
@@ -140,23 +185,19 @@ SETUP_LOG="${ARCANE_DIR}/setup.log"
 if [[ -f "$SETUP" ]]; then
     log INF "setup.sh détecté → exécution immédiate (dans ${ARCANE_DIR})."
     export ARCANE_DIR
-    if [[ $EUID -ne 0 ]]; then
-        sudo -E -H bash -Eeuo pipefail -c "cd \"$ARCANE_DIR\" && ./setup.sh" | tee -a "$SETUP_LOG"
-        RC=${PIPESTATUS[0]}
-    else
-        ( cd "$ARCANE_DIR" && bash -Eeuo pipefail ./setup.sh ) | tee -a "$SETUP_LOG"
-        RC=${PIPESTATUS[0]}
-    fi
-
-    if [[ $RC -eq 0 ]]; then
-        log INF "setup.sh terminé avec succès. (log: $SETUP_LOG)"
-    else
+    ( cd "$ARCANE_DIR" && bash -Eeuo pipefail ./setup.sh ) | tee -a "$SETUP_LOG"
+    RC=${PIPESTATUS[0]}
+    if [[ $RC -ne 0 ]]; then
         log ERR "setup.sh a échoué (code=$RC). Consulte $SETUP_LOG"
         exit $RC
     fi
+    log INF "setup.sh terminé avec succès. (log: $SETUP_LOG)"
 else
     log WRN "setup.sh absent dans ${ARCANE_DIR} → étape post-install ignorée."
 fi
+
+# ====== Écriture du verrou (toujours, même sans setup.sh) ======
+write_lock
 
 # ====== Message final ======
 cat <<EOF
@@ -166,10 +207,12 @@ cat <<EOF
 ----------------------------------------------------
  📂 Dossier : ${TARGET_DIR}
  📁 App     : ${ARCANE_DIR}
- 📜 Log     : ${SETUP_LOG}
+ 🔒 Verrou  : ${LOCK_FILE}
 
- 🔁 Relancer le setup manuellement :
-     cd ${ARCANE_DIR} && sudo ./setup.sh
+ 🔁 Pour réinstaller malgré le verrou :
+     sudo $(basename "$0") --reinstall --force
+
+ 📜 Log setup : ${SETUP_LOG}
 ====================================================
 
 EOF
