@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Arcane - Setup interactif optimisé
-# Configuration hostname avec validation et journalisation
+# Arcane - Setup automatique
+# Installation de WireGuard avec barre de progression
 
 set -Eeuo pipefail
 
@@ -9,32 +9,27 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="${SCRIPT_DIR%/*}"
 readonly LOG_FILE="${ARCANE_DIR:-$ROOT_DIR}/setup.log"
 readonly VERSION_FILE="${ROOT_DIR}/version.txt"
-readonly HOSTNAME_MAX_LEN=63
-readonly HOSTNAME_REGEX='^[A-Za-z0-9][A-Za-z0-9-]{0,62}$'
+readonly WIREGUARD_SCRIPT="${SCRIPT_DIR}/wireguard.sh"
 
-# ---------- Couleurs (optimisé) ----------
+# ---------- Couleurs ----------
 init_colors() {
     if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
         readonly BOLD="$(tput bold)"
         readonly RESET="$(tput sgr0)"
         readonly GREEN="$(tput setaf 2)"
         readonly RED="$(tput setaf 1)"
-        
-        local colors="$(tput colors 2>/dev/null || echo 8)"
-        if [[ $colors -ge 16 ]]; then
-            readonly CYAN="$(tput setaf 6)"
-        else
-            readonly CYAN="${GREEN}"
-        fi
+        readonly CYAN="$(tput setaf 6)"
+        readonly YELLOW="$(tput setaf 3)"
     else
         readonly BOLD=$'\033[1m' RESET=$'\033[0m'
-        readonly GREEN=$'\033[32m' RED=$'\033[31m' CYAN=$'\033[36m'
+        readonly GREEN=$'\033[32m' RED=$'\033[31m'
+        readonly CYAN=$'\033[36m' YELLOW=$'\033[33m'
     fi
 }
 
 # ---------- Logging ----------
 log() {
-    printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" | tee -a "$LOG_FILE"
+    printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >> "$LOG_FILE"
 }
 
 error_exit() {
@@ -79,57 +74,135 @@ show_banner() {
 "
 }
 
-# ---------- Validation hostname ----------
-validate_hostname() {
-    local hostname="$1"
+# ---------- Barre de progression ----------
+show_progress() {
+    local current=$1
+    local total=$2
+    local message="$3"
+    local width=50
+    local percentage=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
     
-    # Vérification longueur
-    if [[ ${#hostname} -gt $HOSTNAME_MAX_LEN ]]; then
-        return 1
-    fi
-    
-    # Vérification format
-    if [[ ! $hostname =~ $HOSTNAME_REGEX ]]; then
-        return 1
-    fi
-    
-    # Ne doit pas finir par un tiret
-    if [[ $hostname =~ -$ ]]; then
-        return 1
-    fi
-    
-    return 0
+    printf "\r${CYAN}[${RESET}"
+    printf "%${filled}s" | tr ' ' '█'
+    printf "%${empty}s" | tr ' ' '░'
+    printf "${CYAN}]${RESET} ${BOLD}%3d%%${RESET} ${message}" "$percentage"
 }
 
-# ---------- Affichage des règles ----------
-show_hostname_rules() {
+# ---------- Vérification des prérequis ----------
+check_requirements() {
+    # Vérifier les droits root
+    if [[ $EUID -ne 0 ]]; then
+        error_exit "Ce script doit être exécuté en tant que root" 1
+    fi
+    
+    # Vérifier que le module wireguard existe
+    if [[ ! -f "$WIREGUARD_SCRIPT" ]]; then
+        error_exit "Module wireguard.sh introuvable: $WIREGUARD_SCRIPT" 2
+    fi
+    
+    # Rendre le module exécutable
+    chmod +x "$WIREGUARD_SCRIPT" 2>>"$LOG_FILE" || \
+        error_exit "Impossible de rendre wireguard.sh exécutable" 3
+}
+
+# ---------- Installation avec progression ----------
+install_wireguard_with_progress() {
+    local steps=(
+        "Vérification du système"
+        "Mise à jour des paquets"
+        "Téléchargement de WireGuard"
+        "Installation de WireGuard"
+        "Génération des clés"
+        "Configuration de l'interface"
+        "Activation de l'IP forwarding"
+        "Configuration du firewall"
+        "Démarrage du service"
+        "Finalisation"
+    )
+    
+    local total=${#steps[@]}
+    
+    echo
+    echo "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${RESET}"
+    echo "${BOLD}  Installation de WireGuard${RESET}"
+    echo "${BOLD}${CYAN}═══════════════════════════════════════════════════════════${RESET}"
+    echo
+    
+    # Exécuter l'installation en arrière-plan et capturer la sortie
+    (
+        export ARCANE_VERSION="$ARCANE_VERSION"
+        export ARCANE_LOG_FILE="$LOG_FILE"
+        bash "$WIREGUARD_SCRIPT" 2>&1 | while IFS= read -r line; do
+            echo "$line" >> "${LOG_FILE}.verbose"
+        done
+    ) &
+    
+    local pid=$!
+    local current=0
+    
+    # Simuler la progression pendant l'installation
+    while kill -0 $pid 2>/dev/null; do
+        if [[ $current -lt $total ]]; then
+            show_progress $current $total "${steps[$current]}"
+            sleep 0.8
+            ((current++))
+        else
+            show_progress $total $total "Finalisation..."
+            sleep 0.3
+        fi
+    done
+    
+    # Attendre la fin du processus et récupérer le code de sortie
+    wait $pid
+    local exit_code=$?
+    
+    # Afficher la barre complète
+    show_progress $total $total "Terminé !"
+    echo
+    echo
+    
+    return $exit_code
+}
+
+# ---------- Écran de démarrage ----------
+show_start_screen() {
     cat << EOF
+
 ┌────────────────────────────────────────────────────────┐
-│  ${BOLD}Configuration: Hostname${RESET}                           │
-├────────────────────────────────────────────────────────┤
-│  Caractères autorisés : a-z, A-Z, 0-9, '-'             │
-│  Doit commencer par une lettre ou un chiffre           │
-│  Longueur max : ${HOSTNAME_MAX_LEN} caractères                          │
+│                                                        │
+│  ${BOLD}Installation automatique de WireGuard${RESET}              │
+│                                                        │
+│  Ce script va :                                        │
+│    • Installer WireGuard                               │
+│    • Générer les clés de chiffrement                   │
+│    • Configurer le serveur VPN                         │
+│                                                        │
 └────────────────────────────────────────────────────────┘
 
 EOF
+    printf "${YELLOW}Appuyez sur une touche pour commencer l'installation...${RESET}"
+    read -n 1 -s -r
+    echo
 }
 
-# ---------- Application du hostname ----------
-apply_hostname() {
-    local new_hostname="$1"
-    
-    echo "Application du nouveau hostname…"
-    
-    # Changement via hostnamectl
-    if ! hostnamectl set-hostname "$new_hostname" 2>>"$LOG_FILE"; then
-        error_exit "Échec du changement de hostname. Voir: $LOG_FILE" 3
-    fi
-    
-    # Mise à jour de /etc/hosts si nécessaire
-    if [[ -f /etc/hosts ]] && grep -q "^127.0.1.1" /etc/hosts 2>/dev/null; then
-        sed -i.bak "s/^127\.0\.1\.1.*/127.0.1.1\t${new_hostname}/" /etc/hosts 2>>"$LOG_FILE" || true
-    fi
+# ---------- Écran de fin ----------
+show_completion_screen() {
+    echo
+    echo "╔════════════════════════════════════════════════════════╗"
+    echo "║                                                        ║"
+    echo "║  ${BOLD}${GREEN}✓  Installation terminée avec succès !${RESET}              ║"
+    echo "║                                                        ║"
+    echo "╠════════════════════════════════════════════════════════╣"
+    echo "║                                                        ║"
+    echo "║  Prochaines étapes :                                   ║"
+    echo "║    1. Configurez vos clients WireGuard                 ║"
+    echo "║    2. Vérifiez le statut : systemctl status wg-quick@wg0 ║"
+    echo "║    3. Consultez les logs : $LOG_FILE"
+    echo "║                                                        ║"
+    echo "╚════════════════════════════════════════════════════════╝"
+    echo
 }
 
 # ---------- Programme principal ----------
@@ -139,53 +212,34 @@ main() {
     clear 2>/dev/null || printf '\033c'
     
     # Lecture de la version
-    local version="unknown"
-    if [[ -f $VERSION_FILE ]]; then
-        version="$(head -n1 "$VERSION_FILE" | tr -d '\r\n')"
+    export ARCANE_VERSION="unknown"
+    if [[ -f "$VERSION_FILE" ]]; then
+        ARCANE_VERSION="$(head -n1 "$VERSION_FILE" | tr -d '\r\n')"
     fi
     
     # Affichage de la bannière
-    show_banner "$version"
+    show_banner "$ARCANE_VERSION"
     
-    # Récupération du hostname actuel
-    local current_hostname
-    current_hostname="$(hostnamectl --static 2>/dev/null || hostname)"
+    # Vérification des prérequis
+    check_requirements
     
-    # Affichage des règles
-    show_hostname_rules
+    log "INF" "Démarrage du setup Arcane v${ARCANE_VERSION}"
     
-    # Saisie du nouveau hostname
-    printf "Hostname [%s]: " "$current_hostname"
-    local new_hostname
-    IFS= read -r new_hostname
-    new_hostname="${new_hostname:-$current_hostname}"
+    # Écran de démarrage
+    show_start_screen
     
-    # Validation
-    if ! validate_hostname "$new_hostname"; then
+    # Installation avec barre de progression
+    if install_wireguard_with_progress; then
+        show_completion_screen
+        log "INF" "Installation terminée avec succès"
+        exit 0
+    else
         echo
-        echo "${RED}✗ Hostname invalide.${RESET}"
-        echo "  Règles :"
-        echo "  - Commencer par lettre ou chiffre"
-        echo "  - Uniquement lettres, chiffres et tirets"
-        echo "  - Ne pas finir par un tiret"
-        echo "  - ${HOSTNAME_MAX_LEN} caractères maximum"
-        exit 2
+        echo "${RED}✗ L'installation a échoué${RESET}"
+        echo "  Consultez les logs : $LOG_FILE"
+        log "ERR" "Installation échouée"
+        exit 1
     fi
-    
-    # Application
-    echo
-    apply_hostname "$new_hostname"
-    
-    # Confirmation
-    echo
-    cat << EOF
-╔════════════════════════════════════════════════════════╗
-║  ${GREEN}✓ Hostname défini :${RESET} $(printf '%-36s' "$new_hostname")║
-╚════════════════════════════════════════════════════════╝
-
-EOF
-    
-    log "INF" "Hostname changed from '${current_hostname}' to '${new_hostname}'"
 }
 
 # ---------- Exécution ----------
