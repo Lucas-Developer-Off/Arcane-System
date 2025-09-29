@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# Installation non-interactive d'Arcane-System depuis un repo GitHub
-# Usage local (par wget/curl) :
-#   bash -c "$(wget -qO- https://raw.githubusercontent.com/<USER>/<REPO>/main/install.sh)" -- [options]
-# Options :
-#   --repo <user/repo>       (facultatif si REPO_DEFAULT est bon)
-#   --branch <branche>       (défaut: main)   --tag <vX.Y.Z> prioritaire sur --branch
-#   --dir <chemin>           (défaut: $HOME/Arcane-System)
-#   --force                  (sauvegarde l’existant et remplace)
-#   -h|--help
+# =====================================================
+# Arcane-System : Script d'installation auto
+# - Télécharge un repo GitHub
+# - Installe dans ~/Arcane-System
+# - Lance setup.sh si présent
+# - Affiche un message final
+# =====================================================
 
 set -Eeuo pipefail
 
-# ====== Paramètres par défaut à ADAPTER ======
-REPO_DEFAULT="Lucas-Developer-Off/Arcane-System"   # ← remplacer par ton user/repo, ex: LucasDev/Arcane-System
+# ====== Paramètres par défaut ======
+REPO_DEFAULT="Lucas-Developer-Off/Arcane-System"
 BRANCH_DEFAULT="main"
 TARGET_DIR_DEFAULT="${HOME}/Arcane-System"
 
@@ -28,11 +26,11 @@ usage() {
 Installateur Arcane-System
 
 Options:
-  --repo <user/repo>     Repo GitHub (ex: lucasdev/Arcane-System)
+  --repo <user/repo>     Repo GitHub (ex: user/Arcane-System)
   --branch <branche>     Branche (defaut: ${BRANCH_DEFAULT})
   --tag <vX.Y.Z>         Tag (prioritaire sur --branch)
   --dir <chemin>         Dossier cible (defaut: ${TARGET_DIR_DEFAULT})
-  --force                Ecrase l'existant (avec backup .bak.TIMESTAMP)
+  --force                Écrase l'existant (backup .bak.TIMESTAMP)
   -h, --help             Aide
 EOF
 }
@@ -49,31 +47,42 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ====== Fonctions ======
 log() { printf '%s [%s] %s\n' "$(date +'%F %T')" "$1" "${*:2}"; }
 
 require_cmd() {
-    local c
     for c in "$@"; do
         command -v "$c" >/dev/null 2>&1 || { echo "Commande requise manquante: $c"; exit 3; }
     done
 }
 
 download() {
-    # download <url> <destfile>
     local url="$1" dest="$2"
     if command -v wget >/dev/null 2>&1; then
         wget -qO "$dest" "$url"
     elif command -v curl >/dev/null 2>&1; then
         curl -fsSL -o "$dest" "$url"
     else
-        echo "Ni wget ni curl n'est disponible."; exit 4
+        echo "Ni wget ni curl trouvé."; exit 4
     fi
 }
 
-# ====== Vérifications minimales ======
+file_put_if_different() {
+    local content="$1" dest="$2"
+    local tmp
+    tmp="$(mktemp)"
+    printf "%s" "$content" > "$tmp"
+    if [[ ! -f "$dest" ]] || ! cmp -s "$tmp" "$dest"; then
+        cp -a "$dest" "${dest}.bak.$(date +'%Y%m%d%H%M%S')" 2>/dev/null || true
+        install -m 0644 "$tmp" "$dest"
+    fi
+    rm -f "$tmp"
+}
+
+# ====== Vérifications ======
 require_cmd tar gzip find
 
-# ====== Construction URL de l'archive GitHub ======
+# ====== URL archive GitHub ======
 if [[ -n "$TAG" ]]; then
     ARCHIVE_URL="https://codeload.github.com/${REPO}/tar.gz/refs/tags/${TAG}"
     REF_DESC="tag ${TAG}"
@@ -85,7 +94,7 @@ fi
 log INF "Repo: ${REPO} (${REF_DESC})"
 log INF "Cible: ${TARGET_DIR}"
 
-# ====== Téléchargement + extraction ======
+# ====== Téléchargement ======
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -95,7 +104,6 @@ download "$ARCHIVE_URL" "$ARCHIVE_FILE" || { echo "Téléchargement échoué."; 
 mkdir -p "${TMP_DIR}/extract"
 tar -xzf "$ARCHIVE_FILE" -C "${TMP_DIR}/extract"
 
-# GitHub décompresse dans un dossier unique <repo>-<ref>
 SRC_DIR="$(find "${TMP_DIR}/extract" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 [[ -n "$SRC_DIR" && -d "$SRC_DIR" ]] || { echo "Extraction invalide."; exit 6; }
 
@@ -106,23 +114,61 @@ if [[ -e "$TARGET_DIR" ]]; then
         mv "$TARGET_DIR" "$BKP"
         log INF "Backup de l'ancien dossier: $BKP"
     else
-        echo "Erreur: ${TARGET_DIR} existe déjà. Relance avec --force pour remplacer."; exit 7;
+        echo "Erreur: ${TARGET_DIR} existe déjà. Utilise --force."; exit 7;
     fi
 fi
 
 mkdir -p "$(dirname "$TARGET_DIR")"
 mv "$SRC_DIR" "$TARGET_DIR"
 
-# Rendre exécutables les scripts .sh (jusqu'à 2 niveaux)
-if command -v xargs >/dev/null 2>&1; then
-    find "$TARGET_DIR" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 chmod +x || true
-fi
+# Scripts exécutables
+find "$TARGET_DIR" -maxdepth 2 -type f -name "*.sh" -print0 | xargs -0 chmod +x || true
 
-# Marqueur simple
+# Meta
 echo "installed_at=$(date +'%F %T')" > "${TARGET_DIR}/.arcane-meta"
 echo "source_repo=${REPO}"           >> "${TARGET_DIR}/.arcane-meta"
 echo "source_ref=${TAG:-$BRANCH}"    >> "${TARGET_DIR}/.arcane-meta"
 
 log INF "Installation terminée."
 log INF "Chemin: ${TARGET_DIR}"
-exit 0
+
+# ====== Lancement automatique de setup.sh ======
+SETUP="$TARGET_DIR/setup.sh"
+SETUP_LOG="$TARGET_DIR/setup.log"
+
+if [[ -f "$SETUP" ]]; then
+    log INF "setup.sh détecté → exécution immédiate."
+
+    if [[ $EUID -ne 0 ]]; then
+        sudo -E -H bash -Eeuo pipefail -c "cd \"$TARGET_DIR\" && ./setup.sh" | tee -a "$SETUP_LOG"
+        RC=${PIPESTATUS[0]}
+    else
+        ( cd "$TARGET_DIR" && bash -Eeuo pipefail ./setup.sh ) | tee -a "$SETUP_LOG"
+        RC=${PIPESTATUS[0]}
+    fi
+
+    if [[ $RC -eq 0 ]]; then
+        log INF "setup.sh terminé avec succès. (log: $SETUP_LOG)"
+    else
+        log ERR "setup.sh a échoué (code=$RC). Consulte $SETUP_LOG"
+        exit $RC
+    fi
+else
+    log WRN "setup.sh absent → étape post-install ignorée."
+fi
+
+# ====== Message final ======
+cat <<EOF
+
+====================================================
+ ✅ Arcane-System installé avec succès
+----------------------------------------------------
+ 📂 Dossier : $TARGET_DIR
+ 📜 Log setup : $SETUP_LOG
+
+ ℹ️  Pour relancer le setup manuellement :
+     cd $TARGET_DIR && sudo ./setup.sh
+
+====================================================
+
+EOF
