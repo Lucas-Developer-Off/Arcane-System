@@ -47,7 +47,7 @@ error_exit() {
 show_banner() {
     local v="${1:-unknown}"
     local vlen=${#v}
-    local pad=$((38 - vlen))
+    local pad=$((37 - vlen))
     
     printf '%s' "\
 ╔═════════════════════════════════════════════════════════════════════════════════════╗
@@ -70,7 +70,7 @@ show_banner() {
 ║ │                                                                                 │ ║
 ║ │                         • Developer : Lucas Developer •                         │ ║
 "
-    printf "║ │%*s• Version : %s •%*s│ ║\n" 30 "" "$v" "$((pad + 1))" ""
+    printf "║ │%*s• Version : %s •%*s│ ║\n" 30 "" "$v" "$pad" ""
     printf '%s' "\
 ║ │                                                                                 │ ║
 ║ └─────────────────────────────────────────────────────────────────────────────────┘ ║
