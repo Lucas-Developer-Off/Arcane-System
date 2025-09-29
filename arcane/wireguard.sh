@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Arcane - Module WireGuard
+# Arcane - Module WireGuard optimisé
 # Installation et configuration de WireGuard
 
 set -Eeuo pipefail
@@ -8,224 +8,164 @@ set -Eeuo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly ROOT_DIR="${SCRIPT_DIR%/*}"
 readonly LOG_FILE="${ARCANE_LOG_FILE:-${ARCANE_DIR:-$ROOT_DIR}/setup.log}"
-readonly WG_CONFIG_DIR="/etc/wireguard"
-readonly WG_INTERFACE="wg0"
+readonly WG_DIR="/etc/wireguard"
+readonly WG_IF="wg0"
 
 # ---------- Couleurs ----------
-init_colors() {
-    if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
-        readonly BOLD="$(tput bold)"
-        readonly RESET="$(tput sgr0)"
-        readonly GREEN="$(tput setaf 2)"
-        readonly RED="$(tput setaf 1)"
-        readonly YELLOW="$(tput setaf 3)"
-        readonly CYAN="$(tput setaf 6)"
-    else
-        readonly BOLD=$'\033[1m' RESET=$'\033[0m'
-        readonly GREEN=$'\033[32m' RED=$'\033[31m'
-        readonly YELLOW=$'\033[33m' CYAN=$'\033[36m'
-    fi
-}
+if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    readonly BOLD=$(tput bold) RESET=$(tput sgr0)
+    readonly GREEN=$(tput setaf 2) RED=$(tput setaf 1)
+    readonly YELLOW=$(tput setaf 3) CYAN=$(tput setaf 6)
+else
+    readonly BOLD=$'\033[1m' RESET=$'\033[0m'
+    readonly GREEN=$'\033[32m' RED=$'\033[31m'
+    readonly YELLOW=$'\033[33m' CYAN=$'\033[36m'
+fi
 
 # ---------- Logging ----------
-log() {
-    printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" | tee -a "$LOG_FILE"
-}
+log() { printf '%s [WG] %s\n' "$(date '+%F %T')" "$1" >> "$LOG_FILE"; }
+error_exit() { echo "${RED}✗ $1${RESET}" >&2; log "ERR: $1"; exit "${2:-1}"; }
 
-error_exit() {
-    echo "${RED}✗ $1${RESET}" >&2
-    log "ERR" "[wireguard] $1"
-    exit "${2:-1}"
-}
-
-# ---------- Vérification de l'installation ----------
-check_wireguard_installed() {
-    if command -v wg >/dev/null 2>&1; then
-        return 0
-    fi
-    return 1
-}
-
-# ---------- Installation de WireGuard ----------
-install_wireguard() {
-    echo "${CYAN}Installation de WireGuard...${RESET}"
-    log "INF" "[wireguard] Début de l'installation"
-    
-    # Détection de la distribution
-    if [[ -f /etc/debian_version ]]; then
-        # Debian/Ubuntu
-        apt-get update 2>>"$LOG_FILE" || error_exit "Échec de la mise à jour des paquets"
-        apt-get install -y wireguard wireguard-tools 2>>"$LOG_FILE" || \
-            error_exit "Échec de l'installation de WireGuard"
+# ---------- Détection distribution ----------
+detect_os() {
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        echo "${ID:-unknown}"
+    elif [[ -f /etc/debian_version ]]; then
+        echo "debian"
     elif [[ -f /etc/redhat-release ]]; then
-        # RedHat/CentOS/Rocky
-        yum install -y epel-release 2>>"$LOG_FILE" || \
-            error_exit "Échec de l'installation de epel-release"
-        yum install -y wireguard-tools 2>>"$LOG_FILE" || \
-            error_exit "Échec de l'installation de WireGuard"
+        echo "rhel"
     else
-        error_exit "Distribution non supportée"
+        echo "unknown"
     fi
+}
+
+# ---------- Installation ----------
+install_wireguard() {
+    local os=$(detect_os)
+    log "Installation sur: $os"
     
-    echo "${GREEN}✓ WireGuard installé${RESET}"
-    log "INF" "[wireguard] Installation terminée avec succès"
+    case "$os" in
+        debian|ubuntu)
+            apt-get update -qq 2>>"$LOG_FILE" || error_exit "Échec mise à jour apt"
+            DEBIAN_FRONTEND=noninteractive apt-get install -qq -y wireguard wireguard-tools 2>>"$LOG_FILE" || \
+                error_exit "Échec installation WireGuard"
+            ;;
+        rhel|centos|rocky|almalinux)
+            yum install -y -q epel-release 2>>"$LOG_FILE" || error_exit "Échec installation epel-release"
+            yum install -y -q wireguard-tools 2>>"$LOG_FILE" || error_exit "Échec installation WireGuard"
+            ;;
+        fedora)
+            dnf install -y -q wireguard-tools 2>>"$LOG_FILE" || error_exit "Échec installation WireGuard"
+            ;;
+        arch|manjaro)
+            pacman -Sy --noconfirm --quiet wireguard-tools 2>>"$LOG_FILE" || error_exit "Échec installation WireGuard"
+            ;;
+        *)
+            error_exit "Distribution non supportée: $os"
+            ;;
+    esac
+    
+    log "WireGuard installé"
 }
 
 # ---------- Génération des clés ----------
 generate_keys() {
-    echo "${CYAN}Génération des clés...${RESET}"
-    log "INF" "[wireguard] Génération des clés"
+    mkdir -p "$WG_DIR" && chmod 700 "$WG_DIR"
     
-    # Créer le répertoire de configuration
-    mkdir -p "$WG_CONFIG_DIR"
-    chmod 700 "$WG_CONFIG_DIR"
+    wg genkey | tee "${WG_DIR}/server_private.key" | wg pubkey > "${WG_DIR}/server_public.key"
+    chmod 600 "${WG_DIR}/server_private.key"
+    chmod 644 "${WG_DIR}/server_public.key"
     
-    # Générer la clé privée
-    wg genkey | tee "${WG_CONFIG_DIR}/server_private.key" | \
-        wg pubkey > "${WG_CONFIG_DIR}/server_public.key"
-    
-    chmod 600 "${WG_CONFIG_DIR}/server_private.key"
-    chmod 644 "${WG_CONFIG_DIR}/server_public.key"
-    
-    echo "${GREEN}✓ Clés générées${RESET}"
-    log "INF" "[wireguard] Clés générées avec succès"
+    log "Clés générées"
 }
 
-# ---------- Configuration de l'interface ----------
+# ---------- Configuration ----------
 configure_interface() {
-    local server_ip="$1"
-    local server_port="${2:-51820}"
-    local private_key
+    local ip="${1:-10.0.0.1/24}" port="${2:-51820}" iface
+    iface=$(ip -o -4 route show to default | awk '{print $5}' | head -1)
+    [[ -z "$iface" ]] && iface="eth0"
     
-    echo "${CYAN}Configuration de l'interface ${WG_INTERFACE}...${RESET}"
-    log "INF" "[wireguard] Configuration de l'interface ${WG_INTERFACE}"
-    
-    private_key="$(cat "${WG_CONFIG_DIR}/server_private.key")"
-    
-    # Créer la configuration
-    cat > "${WG_CONFIG_DIR}/${WG_INTERFACE}.conf" << EOF
+    cat > "${WG_DIR}/${WG_IF}.conf" << EOF
 [Interface]
-Address = ${server_ip}
-ListenPort = ${server_port}
-PrivateKey = ${private_key}
-PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+Address = ${ip}
+ListenPort = ${port}
+PrivateKey = $(cat "${WG_DIR}/server_private.key")
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o ${iface} -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o ${iface} -j MASQUERADE
 
-# Peers will be added below
+# Peers
 EOF
     
-    chmod 600 "${WG_CONFIG_DIR}/${WG_INTERFACE}.conf"
-    
-    echo "${GREEN}✓ Interface configurée${RESET}"
-    log "INF" "[wireguard] Configuration de l'interface terminée"
+    chmod 600 "${WG_DIR}/${WG_IF}.conf"
+    log "Interface configurée (IP: $ip, Port: $port, Iface: $iface)"
 }
 
-# ---------- Activation de l'IP forwarding ----------
+# ---------- IP Forwarding ----------
 enable_ip_forwarding() {
-    echo "${CYAN}Activation de l'IP forwarding...${RESET}"
-    log "INF" "[wireguard] Activation de l'IP forwarding"
-    
-    # Activer temporairement
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
-    
-    # Rendre permanent
-    if ! grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf 2>/dev/null; then
+    grep -q "^net.ipv4.ip_forward=1" /etc/sysctl.conf 2>/dev/null || \
         echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
-    fi
-    
-    echo "${GREEN}✓ IP forwarding activé${RESET}"
-    log "INF" "[wireguard] IP forwarding activé"
+    log "IP forwarding activé"
 }
 
-# ---------- Démarrage du service ----------
+# ---------- Démarrage ----------
 start_wireguard() {
-    echo "${CYAN}Démarrage de WireGuard...${RESET}"
-    log "INF" "[wireguard] Démarrage du service"
-    
-    # Activer et démarrer le service
-    systemctl enable wg-quick@${WG_INTERFACE} 2>>"$LOG_FILE" || \
-        error_exit "Échec de l'activation du service"
-    
-    systemctl start wg-quick@${WG_INTERFACE} 2>>"$LOG_FILE" || \
-        error_exit "Échec du démarrage du service"
-    
-    echo "${GREEN}✓ WireGuard démarré${RESET}"
-    log "INF" "[wireguard] Service démarré avec succès"
+    systemctl enable wg-quick@${WG_IF} 2>>"$LOG_FILE" || error_exit "Échec activation service"
+    systemctl start wg-quick@${WG_IF} 2>>"$LOG_FILE" || error_exit "Échec démarrage service"
+    log "Service démarré"
 }
 
-# ---------- Affichage du résumé ----------
+# ---------- Résumé ----------
 show_summary() {
-    local public_key
-    public_key="$(cat "${WG_CONFIG_DIR}/server_public.key")"
-    
-    echo
-    echo "╔════════════════════════════════════════════════════════╗"
-    echo "║  ${BOLD}${GREEN}Installation WireGuard terminée${RESET}                      ║"
-    echo "╠════════════════════════════════════════════════════════╣"
-    echo "║  Interface  : ${WG_INTERFACE}                                      ║"
-    echo "║  Clé publique serveur :                                ║"
-    echo "║  ${public_key:0:50}... ║"
-    echo "╠════════════════════════════════════════════════════════╣"
-    echo "║  ${YELLOW}Configuration${RESET} : ${WG_CONFIG_DIR}/${WG_INTERFACE}.conf          ║"
-    echo "║  ${YELLOW}Clés${RESET}          : ${WG_CONFIG_DIR}/server_*.key           ║"
-    echo "╚════════════════════════════════════════════════════════╝"
+    local pub=$(cat "${WG_DIR}/server_public.key")
+    cat << EOF
+
+╔════════════════════════════════════════════════════════╗
+║  ${BOLD}${GREEN}WireGuard installé${RESET}                                  ║
+╠════════════════════════════════════════════════════════╣
+║  Interface : ${WG_IF}                                       ║
+║  Clé publique :                                        ║
+║  ${pub:0:54} ║
+╠════════════════════════════════════════════════════════╣
+║  Config : ${WG_DIR}/${WG_IF}.conf                        ║
+║  Clés   : ${WG_DIR}/server_*.key                       ║
+╚════════════════════════════════════════════════════════╝
+EOF
 }
 
-# ---------- Programme principal ----------
+# ---------- Main ----------
 main() {
-    # Initialisation
-    init_colors
+    log "Démarrage module WireGuard"
     
-    log "INF" "[wireguard] Démarrage du module"
-    
-    # Vérifier si WireGuard est déjà installé
-    if check_wireguard_installed; then
-        echo "${YELLOW}⚠ WireGuard est déjà installé${RESET}"
-        log "INF" "[wireguard] WireGuard déjà installé"
-        
-        printf "Voulez-vous reconfigurer ? (o/N): "
-        local response
-        read -r response
-        if [[ ! "$response" =~ ^[oO]$ ]]; then
-            echo "Configuration annulée"
-            log "INF" "[wireguard] Reconfiguration annulée par l'utilisateur"
-            exit 0
-        fi
+    if command -v wg >/dev/null 2>&1; then
+        echo "${YELLOW}⚠ WireGuard déjà installé${RESET}"
+        log "WireGuard déjà installé"
+        printf "Reconfigurer ? (o/N): "
+        read -r resp
+        [[ ! "$resp" =~ ^[oO]$ ]] && { log "Reconfiguration annulée"; exit 0; }
     else
-        # Installation
         install_wireguard
     fi
     
-    # Saisie des paramètres
-    echo
-    echo "${BOLD}Configuration du serveur WireGuard${RESET}"
-    echo
+    echo -e "\n${BOLD}Configuration du serveur WireGuard${RESET}\n"
     
-    printf "Adresse IP du serveur (ex: 10.0.0.1/24): "
-    local server_ip
-    read -r server_ip
-    
-    if [[ -z "$server_ip" ]]; then
-        error_exit "L'adresse IP est requise"
-    fi
+    printf "Adresse IP serveur (ex: 10.0.0.1/24) [10.0.0.1/24]: "
+    read -r ip
+    ip="${ip:-10.0.0.1/24}"
     
     printf "Port d'écoute [51820]: "
-    local server_port
-    read -r server_port
-    server_port="${server_port:-51820}"
+    read -r port
+    port="${port:-51820}"
     
-    # Configuration
     echo
     generate_keys
-    configure_interface "$server_ip" "$server_port"
+    configure_interface "$ip" "$port"
     enable_ip_forwarding
     start_wireguard
-    
-    # Résumé
     show_summary
     
-    log "INF" "[wireguard] Module terminé avec succès"
+    log "Module terminé avec succès"
 }
 
-# ---------- Exécution ----------
 main "$@"
