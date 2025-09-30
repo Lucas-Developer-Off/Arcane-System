@@ -2,10 +2,12 @@
 # Arcane-System : Installateur simplifié
 # Met à jour le système avec une barre de progression
 
-set -Eeuo pipefail
+set -Eeo pipefail
 
 # ---------- Configuration (minimale) ----------
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+set -u
 
 # ---------- Couleurs ----------
 if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
