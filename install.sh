@@ -180,10 +180,12 @@ main() {
 
     # Mise à jour du système avec barre de progression
     log "Préparation de la mise à jour du système"
-    if run_with_progress "Exécution: apt-get update && apt-get upgrade -y" "apt-get update && apt-get upgrade -y"; then
+    local apt_log="/tmp/arcane_apt_update.log"
+    if run_with_progress "Exécution: apt-get update && apt-get upgrade -y" "apt-get update -y -o=Dpkg::Progress-Fancy=0 >$apt_log 2>&1 && apt-get upgrade -y -o=Dpkg::Progress-Fancy=0 >>$apt_log 2>&1"; then
         log "${GREEN}✓ Système à jour${RESET}"
     else
         log "${YELLOW}⚠ La mise à jour du système a rencontré des erreurs (suite de l'installation)${RESET}"
+        log "Consulte le journal: ${apt_log}"
     fi
     
     # Mode local: si le script est exécuté depuis un clone contenant arcane/setup.sh
