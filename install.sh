@@ -74,6 +74,11 @@ require_cmd() {
 
 # Affiche une barre de progression animée pendant l'exécution d'une commande
 run_with_progress() {
+    # Exige au moins 2 arguments: message + commande
+    if [[ $# -lt 2 ]]; then
+        error_exit "run_with_progress: arguments insuffisants" 9
+    fi
+
     local message="$1"; shift
     local cmd="$*"
 
