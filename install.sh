@@ -57,8 +57,8 @@ run_with_progress() {
 
     echo "${BOLD}${message}${RESET}"
 
-    # Lance la commande en arrière-plan
-    bash -c "$cmd" &
+    # Lance la commande en arrière-plan avec redirection complète
+    bash -c "$cmd" >/dev/null 2>&1 &
     local cmd_pid=$!
 
     # Prépare l'affichage
@@ -68,7 +68,7 @@ run_with_progress() {
     printf "\n"  # ligne dédiée à la barre
 
     # Animation tant que la commande tourne
-    while kill -0 "$cmd_pid" >/dev/null 2>&1; do
+    while kill -0 "$cmd_pid" 2>/dev/null; do
         i=$(( (i + 1) % (width * 2) ))
         local filled=$(( i <= width ? i : (2*width - i) ))
         local bar
@@ -123,7 +123,7 @@ main() {
     # Mise à jour du système avec barre de progression
     log "Préparation de la mise à jour du système"
     local apt_log="/tmp/arcane_apt_update.log"
-    if run_with_progress "Exécution: apt-get update && apt-get upgrade -y" "apt-get update -y -o=Dpkg::Progress-Fancy=0 >$apt_log 2>&1 && apt-get upgrade -y -o=Dpkg::Progress-Fancy=0 >>$apt_log 2>&1"; then
+    if run_with_progress "Exécution: apt-get update && apt-get upgrade -y" "apt-get update -y >$apt_log 2>&1 && apt-get upgrade -y >>$apt_log 2>&1"; then
         log "${GREEN}✓ Système à jour${RESET}"
     else
         log "${YELLOW}⚠ La mise à jour du système a rencontré des erreurs${RESET}"
