@@ -72,6 +72,43 @@ require_cmd() {
     [[ ${#missing[@]} -gt 0 ]] && error_exit "Commandes manquantes: ${missing[*]}" 2
 }
 
+# Affiche une barre de progression animée pendant l'exécution d'une commande
+run_with_progress() {
+    local message="$1"; shift
+    local cmd="$*"
+
+    echo "${BOLD}${message}${RESET}"
+
+    # Lance la commande en arrière-plan
+    bash -c "$cmd" &
+    local cmd_pid=$!
+
+    # Prépare l'affichage
+    local width=40
+    local i=0
+    tput civis 2>/dev/null || true
+    printf "\n"  # ligne dédiée à la barre
+
+    # Animation tant que la commande tourne
+    while kill -0 "$cmd_pid" >/dev/null 2>&1; do
+        i=$(( (i + 1) % (width * 2) ))
+        local filled=$(( i <= width ? i : (2*width - i) ))
+        local bar
+        bar=$(printf "%${filled}s" | tr ' ' '#')
+        local spaces
+        spaces=$(printf "%$((width - filled))s")
+        printf "\r[%s%s]" "$bar" "$spaces"
+        sleep 0.08
+    done
+
+    # Attend la fin et fixe l'état
+    wait "$cmd_pid"
+    local status=$?
+    printf "\r[%s]\n" "$(printf "%${width}s" | tr ' ' '#')"
+    tput cnorm 2>/dev/null || true
+    return "$status"
+}
+
 download() {
     local url="$1" dest="$2"
     if command -v curl >/dev/null 2>&1; then
@@ -139,7 +176,15 @@ main() {
     show_banner
     
     require_root
-    require_cmd tar gzip
+    require_cmd tar gzip apt-get
+
+    # Mise à jour du système avec barre de progression
+    log "Préparation de la mise à jour du système"
+    if run_with_progress "Exécution: apt-get update && apt-get upgrade -y" "apt-get update && apt-get upgrade -y"; then
+        log "${GREEN}✓ Système à jour${RESET}"
+    else
+        log "${YELLOW}⚠ La mise à jour du système a rencontré des erreurs (suite de l'installation)${RESET}"
+    fi
     
     # Mode local: si le script est exécuté depuis un clone contenant arcane/setup.sh
     local local_arcane_setup="${SCRIPT_DIR}/${ARCANE_SUBDIR}/setup.sh"
