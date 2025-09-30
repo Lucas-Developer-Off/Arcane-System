@@ -113,7 +113,6 @@ EOF
 
 # ---------- Main ----------
 main() {
-    clear 2>/dev/null || printf '\033c'
     show_banner
     
     require_root
