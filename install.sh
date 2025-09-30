@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 
 # ---------- Configuration (minimale) ----------
-readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # ---------- Couleurs ----------
 if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
