@@ -55,7 +55,17 @@ run_with_progress() {
     local message="$1"; shift
     local cmd="$*"
 
-    echo "${BOLD}${message}${RESET}"
+    # Choisit une sortie visible même si stdout n'est pas un TTY (cas: wget | bash)
+    local prog_fd
+    if [[ -w /dev/tty ]]; then
+        # Utilise le terminal directement
+        exec {prog_fd}<>/dev/tty
+    else
+        # Fallback sur stdout
+        exec {prog_fd}>&1
+    fi
+
+    printf "%s\n" "${BOLD}${message}${RESET}" >&${prog_fd}
 
     # Lance la commande en arrière-plan avec redirection complète
     bash -c "$cmd" >/dev/null 2>&1 &
@@ -65,9 +75,9 @@ run_with_progress() {
     local width=40
     local i=0
     tput civis 2>/dev/null || true
-    printf "\n"  # ligne dédiée à la barre
+    printf "\n" >&${prog_fd}  # ligne dédiée à la barre
     # Affiche un premier état de barre immédiatement
-    printf "\r[%s]" "$(printf "%${width}s" | tr ' ' ' ')"
+    printf "\r[%s]" "$(printf "%${width}s" | tr ' ' ' ')" >&${prog_fd}
     # Petite pause pour garantir au moins une frame visible
     sleep 0.1
 
@@ -79,7 +89,7 @@ run_with_progress() {
         bar=$(printf "%${filled}s" | tr ' ' '#')
         local spaces
         spaces=$(printf "%$((width - filled))s")
-        printf "\r[%s%s]" "$bar" "$spaces"
+        printf "\r[%s%s]" "$bar" "$spaces" >&${prog_fd}
         sleep 0.08
     done
 
@@ -88,8 +98,10 @@ run_with_progress() {
     wait "$cmd_pid"
     local status=$?
     set -e
-    printf "\r[%s]\n" "$(printf "%${width}s" | tr ' ' '#')"
+    printf "\r[%s]\n" "$(printf "%${width}s" | tr ' ' '#')" >&${prog_fd}
     tput cnorm 2>/dev/null || true
+    # Ferme le descripteur si ouvert sur /dev/tty
+    exec {prog_fd}>&-
     return "$status"
 }
 
