@@ -66,6 +66,10 @@ run_with_progress() {
     local i=0
     tput civis 2>/dev/null || true
     printf "\n"  # ligne dédiée à la barre
+    # Affiche un premier état de barre immédiatement
+    printf "\r[%s]" "$(printf "%${width}s" | tr ' ' ' ')"
+    # Petite pause pour garantir au moins une frame visible
+    sleep 0.1
 
     # Animation tant que la commande tourne
     while kill -0 "$cmd_pid" 2>/dev/null; do
@@ -79,9 +83,11 @@ run_with_progress() {
         sleep 0.08
     done
 
-    # Attend la fin et fixe l'état
+    # Attend la fin et fixe l'état (ne pas quitter sur set -e)
+    set +e
     wait "$cmd_pid"
     local status=$?
+    set -e
     printf "\r[%s]\n" "$(printf "%${width}s" | tr ' ' '#')"
     tput cnorm 2>/dev/null || true
     return "$status"
