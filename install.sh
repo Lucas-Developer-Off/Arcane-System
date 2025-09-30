@@ -11,6 +11,7 @@ readonly TARGET_DIR_DEFAULT="${HOME}/Arcane-System"
 readonly ARCANE_SUBDIR="arcane"
 readonly LOCK_DIR="/var/lib/arcane"
 readonly LOCK_FILE="${LOCK_DIR}/installed.lock"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------- Variables ----------
 REPO="$REPO_DEFAULT"
@@ -19,6 +20,7 @@ TAG=""
 TARGET_DIR="$TARGET_DIR_DEFAULT"
 FORCE="no"
 REINSTALL="no"
+USE_LOCAL="auto"
 
 # ---------- Couleurs ----------
 if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
@@ -125,6 +127,7 @@ while [[ $# -gt 0 ]]; do
         --dir)       TARGET_DIR="$2"; shift 2;;
         --force)     FORCE="yes"; shift;;
         --reinstall) REINSTALL="yes"; shift;;
+        --local)     USE_LOCAL="yes"; shift;;
         -h|--help)   usage; exit 0;;
         *) error_exit "Option inconnue: $1\nUtilise --help pour l'aide" 2;;
     esac
@@ -137,6 +140,45 @@ main() {
     
     require_root
     require_cmd tar gzip
+    
+    # Mode local: si le script est exécuté depuis un clone contenant arcane/setup.sh
+    local local_arcane_setup="${SCRIPT_DIR}/${ARCANE_SUBDIR}/setup.sh"
+    if [[ "$USE_LOCAL" == "yes" || ( "$USE_LOCAL" == "auto" && -f "$local_arcane_setup" ) ]]; then
+        log "Mode    : ${BOLD}local${RESET} (aucun téléchargement)"
+        TARGET_DIR="$SCRIPT_DIR"
+        local arcane_dir="${TARGET_DIR}/${ARCANE_SUBDIR}"
+        local setup="${arcane_dir}/setup.sh"
+        echo
+        if [[ -f "$setup" ]]; then
+            log "Lancement de ${BOLD}setup.sh${RESET}..."
+            echo
+            export ARCANE_DIR="$arcane_dir"
+            if (cd "$arcane_dir" && bash ./setup.sh); then
+                log "${GREEN}✓ Configuration terminée${RESET}"
+            else
+                error_exit "Échec de la configuration" 8
+            fi
+            write_lock
+            # Résumé final
+            cat << EOF
+
+╔═══════════════════════════════════════════════════════════╗
+║  ${BOLD}${GREEN}✓  Installation réussie${RESET}                               ║
+╠═══════════════════════════════════════════════════════════╣
+║  📂 Dossier : ${TARGET_DIR}
+║  📁 App     : ${arcane_dir}
+║  🔒 Verrou  : ${LOCK_FILE}
+║                                                           ║
+║  ${BOLD}Réinstaller :${RESET}                                         ║
+║  sudo $0 --reinstall --force --local
+╚═══════════════════════════════════════════════════════════╝
+
+EOF
+            return 0
+        else
+            log "${YELLOW}⚠ setup.sh introuvable en mode local, bascule en mode distant${RESET}"
+        fi
+    fi
     
     # Vérif verrou
     if [[ -f "$LOCK_FILE" && "$REINSTALL" != "yes" ]]; then
